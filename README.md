@@ -60,10 +60,9 @@ python main.py --no-dashboard
 
 ## Important measurement note
 
-The dashboard labels the y-axis as "Recorded value (converter output units)".
-Although the Red Pitaya acquisition was configured for VOLT mode, the converter
-reported Int16 data and the CSV contains integers. Do not interpret these values
-as volts until the VOLT/RAW scaling has been verified experimentally or against
+The loader multiplies both channel values by `40 / 2^16` and the dashboard
+displays the resulting values as volts. Although the Red Pitaya acquisition was
+configured for VOLT mode, verify this scaling experimentally or against
 documentation for the exact installed Red Pitaya software version.
 
 The time axis assumes a constant sampling rate of 20 kHz by default. Change it
@@ -77,10 +76,13 @@ CSV directly. The **Raw signal** tab shows the unprocessed recording. The
 algorithm and displays the estimated leak distance, cross-spectrum, coherence,
 and filtered correlation. Wave speed, sensor spacing, Welch segmentation,
 overlap, and coherence threshold can be adjusted before running the analysis.
+The dashboard also provides an optional 60 Hz harmonic notch filter. Its total
+bandwidth can be set from 0.00 to 15.00 Hz in 0.01 Hz increments; the filter
+is applied to in-memory copies only, so the CSV and raw-signal display remain
+unchanged.
 
 ## Other notes
 The Red Pitaya wipes local samples after turning it off
-
 
 
 
