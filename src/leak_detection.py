@@ -76,6 +76,8 @@ def analyze_leak(
     overlap: float = 0.75,
     coherence_threshold: float = 0.4,
     harmonic_bandwidth_hz: float = 0.0,
+    frequency_threshold: float = 75,
+
 ) -> LeakAnalysis:
     """Estimate leak location using coherence-filtered cross-correlation."""
     # Reject physically or mathematically invalid analysis settings first.
@@ -137,6 +139,10 @@ def analyze_leak(
         x1, x2, fs=sampling_rate_hz, nperseg=segment_length, noverlap=noverlap
     )
 
+
+    #Filter below 75 Hz
+    coherence_values[frequency_hz < frequency_threshold] = 0
+
     # Keep only frequencies whose coherence exceeds the user-selected cutoff.
     leak_band = coherence_values > coherence_threshold
     # Preserve the phase of selected cross-spectrum values while normalizing
@@ -146,6 +152,8 @@ def analyze_leak(
         * leak_band
         / (np.abs(cross_spectrum) + np.finfo(float).eps)
     )
+
+
     # Transform the filtered spectrum back to a centered time-domain
     # correlation signal.
     correlation = np.fft.fftshift(np.fft.irfft(filtered_cross_spectrum))
