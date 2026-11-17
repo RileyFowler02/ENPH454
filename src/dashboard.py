@@ -16,6 +16,13 @@ import streamlit as st
 from src.leak_detection import LeakAnalysis, analyze_leak
 # Import the CSV loader and time-axis helper.
 from src.loader import add_time_axis, load_redpitaya_csv
+from src.test_logging import (
+    append_test_run,
+    create_session,
+    end_session,
+    find_sessions_for_day,
+    resume_session,
+)
 
 # Resolve the project folder from this source file's location.
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,6 +105,88 @@ sampling_rate = st.sidebar.number_input(
     value=DEFAULT_FS,
     step=1000,
 )
+
+
+@st.dialog("Start testing session", width="large")
+def open_test_session_dialog() -> None:
+    """Set up session metadata once when the dashboard is opened."""
+    st.write("Document this testing session before collecting samples.")
+
+    existing_sessions = find_sessions_for_day(ROOT)
+    if existing_sessions:
+        session_choice = st.radio(
+            "Session",
+            ["Start a new session", "Resume today's latest session"],
+        )
+    else:
+        session_choice = "Start a new session"
+
+    if session_choice == "Resume today's latest session":
+        existing_path = existing_sessions[0]
+        existing = resume_session(ROOT, existing_path)
+        default_objective = existing.get("session_objective", "")
+        default_notes = existing.get("session_notes", "")
+    else:
+        existing_path = None
+        default_objective = ""
+        default_notes = ""
+
+    st.text_input("Recording", value=selected_name, disabled=True)
+    st.text_input(
+        "Sampling rate",
+        value=f"{sampling_rate:,.0f} Hz",
+        disabled=True,
+    )
+    objective = st.text_area(
+        "Session objective",
+        value=default_objective,
+        height=100,
+    )
+    session_notes = st.text_area(
+        "Known setup notes",
+        value=default_notes,
+        height=130,
+    )
+
+    if st.button("Start session", type="primary"):
+        if session_choice == "Resume today's latest session" and existing_path:
+            session_id = existing.get("session_id", existing_path.stem)
+            log_path = existing_path
+        else:
+            session_id, log_path = create_session(
+                ROOT,
+                {
+                    "session_objective": objective,
+                    "session_notes": session_notes,
+                },
+            )
+
+        st.session_state["test_session_started"] = True
+        st.session_state["test_session_id"] = session_id
+        st.session_state["test_log_path"] = str(log_path)
+        st.session_state["test_session_objective"] = objective
+        st.session_state["test_session_notes"] = session_notes
+        if session_choice == "Resume today's latest session" and existing_path:
+            st.session_state["test_run_id"] = int(existing.get("run_id", "0"))
+        else:
+            st.session_state["test_run_id"] = 0
+        st.rerun()
+
+
+if not st.session_state.get("test_session_started", False):
+    open_test_session_dialog()
+    st.stop()
+
+
+with st.sidebar:
+    st.subheader("Test session")
+    st.caption(st.session_state["test_session_id"])
+    log_path = Path(st.session_state["test_log_path"])
+    st.caption(str(log_path.relative_to(ROOT)))
+    if st.button("End session"):
+        end_session(log_path)
+        st.session_state["test_session_started"] = False
+        st.rerun()
 
 try:
     # Loading is cached, so repeated dashboard interactions avoid rereading
@@ -237,6 +326,11 @@ with processed_tab:
         "The notch filter is applied only to in-memory copies for analysis; "
         "the CSV and raw-signal view are not modified."
     )
+    run_notes = st.text_area(
+        "Notes for this test",
+        key="test_run_notes",
+        placeholder="Observed behavior, setup changes, anomalies, or next steps...",
+    )
 
     # Do expensive processing only after the user requests it.
     if st.button("Run leak-location algorithm", type="primary"):
@@ -257,9 +351,44 @@ with processed_tab:
             # Save the result so it remains visible across Streamlit reruns.
             st.session_state["leak_analysis"] = result
             st.session_state["leak_analysis_recording"] = selected_name
+
+            # Each completed analysis becomes one row in the current test log.
+            next_run_id = int(st.session_state.get("test_run_id", 0)) + 1
+            append_test_run(
+                log_path,
+                st.session_state["test_session_id"],
+                next_run_id,
+                {
+                    "session_objective": st.session_state["test_session_objective"],
+                    "session_notes": st.session_state["test_session_notes"],
+                    "recording": selected_name,
+                    "sampling_rate_hz": float(sampling_rate),
+                    "channels": ",".join(channels),
+                    "time_window_start_s": float(start_time),
+                    "time_window_end_s": float(end_time),
+                    "wave_speed_m_per_s": float(wave_speed),
+                    "sensor_spacing_m": float(sensor_spacing),
+                    "welch_segments": int(segments),
+                    "welch_overlap": float(overlap),
+                    "coherence_threshold": float(coherence_threshold),
+                    "harmonic_bandwidth_hz": float(harmonic_bandwidth),
+                    "estimated_distance_m": float(result.leak_distance_m),
+                    "peak_lag_s": float(result.peak_lag_s),
+                    "segment_length": int(result.segment_length),
+                    "run_notes": run_notes,
+                },
+            )
+            st.session_state["test_run_id"] = next_run_id
+            st.success(
+                f"Test run {next_run_id} saved to "
+                f"{log_path.relative_to(ROOT)}"
+            )
+            st.session_state["test_run_notes"] = ""
         except ValueError as error:
             # Show invalid parameter errors without crashing the dashboard.
             st.error(f"Could not run leak analysis: {error}")
+        except OSError as error:
+            st.error(f"Could not save this test run: {error}")
 
     # Retrieve the most recent result and the recording it belongs to.
     result = st.session_state.get("leak_analysis")

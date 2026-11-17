@@ -7,6 +7,7 @@ ENPH454/
 ├── client/
 │   └── convert_tool.exe
 ├── data/
+├── test logs/
 ├── src/
 │   ├── __init__.py
 │   ├── transfer.py
@@ -80,6 +81,22 @@ The dashboard also provides an optional 60 Hz harmonic notch filter. Its total
 bandwidth can be set from 0.00 to 15.00 Hz in 0.01 Hz increments; the filter
 is applied to in-memory copies only, so the CSV and raw-signal display remain
 unchanged.
+
+## Testing-session logs
+
+The dashboard opens a testing-session setup dialog the first time it starts.
+The dialog can create a new session or resume today's latest session, and
+captures the operator, objective, and known setup notes.
+
+Every successful leak-analysis run is appended to a CSV in `test logs/`. Files
+are grouped by day and session:
+
+```
+test logs/test_log_2026-11-17_session-1.csv
+```
+
+Use **End session** in the dashboard sidebar when testing is complete. A
+session will remain resumable until its CSV is edited or removed.
 
 ## Other notes
 The Red Pitaya wipes local samples after turning it off
