@@ -312,7 +312,7 @@ with processed_tab:
         "Welch segments", min_value=1, max_value=128, value=16, step=1
     )
     overlap = st.slider("Welch overlap", 0.0, 0.95, 0.75)
-    # This cutoff decides which frequency bins are considered coherent.
+    # This cutoff decides which frequency bins are considered coherent
     coherence_threshold = st.slider("Coherence threshold", 0.0, 1.0, 0.4)
     harmonic_bandwidth = st.number_input(
         "60 Hz harmonic notch bandwidth (Hz)",
@@ -445,6 +445,34 @@ with processed_tab:
         )
         # Render the frequency-domain chart.
         st.plotly_chart(spectrum, use_container_width=True)
+
+        # Plot the cross-spectral density magnitude from the two channels.
+        csd_plot = go.Figure()
+        csd_magnitude = abs(result.cross_spectrum)
+        csd_plot.add_trace(
+            go.Scatter(
+                x=result.frequency_hz,
+                y=csd_magnitude,
+                mode="lines",
+                name="Cross spectral density",
+            )
+        )
+        csd_plot.add_trace(
+            go.Scatter(
+                x=result.frequency_hz[result.leak_band],
+                y=csd_magnitude[result.leak_band],
+                mode="markers",
+                name="Coherence-selected",
+            )
+        )
+        csd_plot.update_layout(
+            title="Cross-spectral density magnitude",
+            xaxis_title="Frequency (Hz)",
+            yaxis_title="Magnitude (V²/Hz)",
+            yaxis_type="log",
+            height=400,
+        )
+        st.plotly_chart(csd_plot, use_container_width=True)
 
         # Plot the coherence value used by the filter.
         coherence_plot = go.Figure()
