@@ -2,8 +2,14 @@
 
 # Path provides reliable project-relative file paths.
 from pathlib import Path
+import sys
 # math is used to calculate a display downsampling interval.
 import math
+
+# Resolve the project folder before importing project modules.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 # pandas stores and summarizes the recording samples.
 import pandas as pd
@@ -24,8 +30,6 @@ from src.test_logging import (
     resume_session,
 )
 
-# Resolve the project folder from this source file's location.
-ROOT = Path(__file__).resolve().parents[1]
 # CSV recordings are kept in the project's data folder.
 DATA_DIR = ROOT / "data"
 # Use the same default rate as the command-line workflow.
@@ -326,6 +330,9 @@ with processed_tab:
         "The notch filter is applied only to in-memory copies for analysis; "
         "the CSV and raw-signal view are not modified."
     )
+    if st.session_state.pop("_clear_test_run_notes", False):
+        st.session_state["test_run_notes"] = ""
+
     run_notes = st.text_area(
         "Notes for this test",
         key="test_run_notes",
@@ -383,7 +390,8 @@ with processed_tab:
                 f"Test run {next_run_id} saved to "
                 f"{log_path.relative_to(ROOT)}"
             )
-            st.session_state["test_run_notes"] = ""
+            st.session_state["_clear_test_run_notes"] = True
+            st.rerun()
         except ValueError as error:
             # Show invalid parameter errors without crashing the dashboard.
             st.error(f"Could not run leak analysis: {error}")
