@@ -6,7 +6,13 @@ from dataclasses import dataclass
 # NumPy provides arrays and the inverse-transform operations.
 import numpy as np
 # SciPy supplies the frequency-domain and signal-processing calculations.
-from scipy.signal import coherence, csd, hilbert, welch
+from scipy.signal import coherence, csd, hilbert
+
+
+DEFAULT_WAVE_SPEED_M_PER_S = 1780.0
+WELCH_SEGMENT_LENGTH = 2048
+WELCH_OVERLAP = 0.5
+
 
 @dataclass(frozen=True)
 class LeakAnalysis:
@@ -24,7 +30,7 @@ class LeakAnalysis:
     lag_s: np.ndarray
     # Filtered cross-correlation between the two channels.
     correlation: np.ndarray
-    # Magnitude of the analytic correlation signal.
+    # Magnitude of the analytic correlation signal
     envelope: np.ndarray
     # Delay at the largest envelope peak.
     peak_lag_s: float
@@ -70,14 +76,11 @@ def analyze_leak(
     channel_1: np.ndarray,
     channel_2: np.ndarray,
     sampling_rate_hz: float,
-    wave_speed_m_per_s: float = 1400.0,
+    wave_speed_m_per_s: float = DEFAULT_WAVE_SPEED_M_PER_S,
     sensor_spacing_m: float = 4.0,
-    segments: int = 16,
-    overlap: float = 0.75,
     coherence_threshold: float = 0.4,
     harmonic_bandwidth_hz: float = 0.0,
-    frequency_threshold: float = 75,
-
+    frequency_threshold_hz: float = 75.0,
 ) -> LeakAnalysis:
     """Estimate leak location using coherence-filtered cross-correlation."""
     # Reject physically or mathematically invalid analysis settings first.
@@ -87,15 +90,15 @@ def analyze_leak(
         raise ValueError("Wave speed must be greater than zero.")
     if sensor_spacing_m <= 0:
         raise ValueError("Sensor spacing must be greater than zero.")
-    if segments < 1:
-        raise ValueError("Number of segments must be at least one.")
-    if not 0 <= overlap < 1:
-        raise ValueError("Overlap must be at least 0 and less than 1.")
     if not 0 <= coherence_threshold <= 1:
         raise ValueError("Coherence threshold must be between 0 and 1.")
     if not np.isfinite(harmonic_bandwidth_hz) or harmonic_bandwidth_hz < 0:
         raise ValueError(
             "Harmonic filter bandwidth must be finite and non-negative."
+        )
+    if not np.isfinite(frequency_threshold_hz) or frequency_threshold_hz < 0:
+        raise ValueError(
+            "Minimum analysis frequency must be finite and non-negative."
         )
 
     # Convert inputs to floating-point one-dimensional arrays for SciPy.
@@ -118,16 +121,10 @@ def analyze_leak(
         x2, sampling_rate_hz, harmonic_bandwidth_hz
     )
 
-    # Choose a segment size that approximately creates the requested number
-    # of overlapping Welch segments, while keeping at least two samples.
-    segment_length = max(
-        2,
-        int(len(x1) / (1 + (segments - 1) * (1 - overlap))),
-    )
-    # Never ask SciPy to use a segment longer than the recording itself.
-    segment_length = min(segment_length, len(x1))
-    # Convert the fractional overlap into samples and keep it valid.
-    noverlap = min(int(segment_length * overlap), segment_length - 1)
+    # Short recordings use their full length because SciPy requires nperseg
+    # not to exceed the number of available samples.
+    segment_length = min(WELCH_SEGMENT_LENGTH, len(x1))
+    noverlap = int(segment_length * WELCH_OVERLAP)
 
     # Estimate the cross-spectrum, which describes how the channels relate at
     # each frequency.
@@ -138,10 +135,7 @@ def analyze_leak(
     _, coherence_values = coherence(
         x1, x2, fs=sampling_rate_hz, nperseg=segment_length, noverlap=noverlap
     )
-
-
-    #Filter below 75 Hz
-    coherence_values[frequency_hz < frequency_threshold] = 0
+    coherence_values[frequency_hz < frequency_threshold_hz] = 0
 
     # Keep only frequencies whose coherence exceeds the user-selected cutoff.
     leak_band = coherence_values > coherence_threshold
@@ -152,8 +146,6 @@ def analyze_leak(
         * leak_band
         / (np.abs(cross_spectrum) + np.finfo(float).eps)
     )
-
-
     # Transform the filtered spectrum back to a centered time-domain
     # correlation signal.
     correlation = np.fft.fftshift(np.fft.irfft(filtered_cross_spectrum))

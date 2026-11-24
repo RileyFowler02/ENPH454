@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 # pandas stores and summarizes the recording samples.
+import numpy as np
 import pandas as pd
 # Plotly builds interactive charts in the browser.
 import plotly.graph_objects as go
@@ -19,13 +20,20 @@ import plotly.graph_objects as go
 import streamlit as st
 
 # Import the analysis result type and processing function.
-from src.leak_detection import LeakAnalysis, analyze_leak
+from src.leak_detection import (
+    DEFAULT_WAVE_SPEED_M_PER_S,
+    WELCH_OVERLAP,
+    WELCH_SEGMENT_LENGTH,
+    LeakAnalysis,
+    analyze_leak,
+)
 # Import the CSV loader and time-axis helper.
 from src.loader import add_time_axis, load_redpitaya_csv
 from src.test_logging import (
     append_test_run,
     create_session,
     end_session,
+    find_all_sessions,
     find_sessions_for_day,
     resume_session,
 )
@@ -34,6 +42,7 @@ from src.test_logging import (
 DATA_DIR = ROOT / "data"
 # Use the same default rate as the command-line workflow.
 DEFAULT_FS = 20_000
+DEMO_RECORDING_NAME = "Synthetic demo (not logged)"
 # Avoid sending too many points to the browser chart at once.
 MAX_DISPLAY_POINTS = 600_000
 
@@ -55,16 +64,37 @@ def load_recording(csv_path: str, sampling_rate_hz: float) -> pd.DataFrame:
 
 
 @st.cache_data
+def create_demo_recording(sampling_rate_hz: float) -> pd.DataFrame:
+    """Create deterministic two-channel data for previewing the dashboard."""
+    sample_count = min(max(int(sampling_rate_hz * 2), 4096), 100_000)
+    time_s = np.arange(sample_count) / sampling_rate_hz
+    frequency_1_hz = min(180.0, sampling_rate_hz * 0.15)
+    frequency_2_hz = min(360.0, sampling_rate_hz * 0.35)
+    source = (
+        np.sin(2 * np.pi * frequency_1_hz * time_s)
+        + 0.4 * np.sin(2 * np.pi * frequency_2_hz * time_s)
+    )
+    delay_samples = max(1, int(round(sampling_rate_hz * 0.0004)))
+    noise = np.random.default_rng(42).normal(0, 0.08, (2, sample_count))
+
+    return pd.DataFrame(
+        {
+            "time_s": time_s,
+            "channel_1": source + noise[0],
+            "channel_2": np.roll(source, delay_samples) + noise[1],
+        }
+    )
+
+
+@st.cache_data
 def run_leak_analysis(
     channel_1: tuple[float, ...],
     channel_2: tuple[float, ...],
     sampling_rate_hz: float,
-    wave_speed_m_per_s: float,
     sensor_spacing_m: float,
-    segments: int,
-    overlap: float,
     coherence_threshold: float,
     harmonic_bandwidth_hz: float,
+    frequency_threshold_hz: float,
 ) -> LeakAnalysis:
     # Streamlit caching requires immutable, hashable inputs, so the caller
     # passes channel samples as tuples and they are converted back to arrays.
@@ -72,12 +102,10 @@ def run_leak_analysis(
         channel_1=pd.Series(channel_1).to_numpy(),
         channel_2=pd.Series(channel_2).to_numpy(),
         sampling_rate_hz=sampling_rate_hz,
-        wave_speed_m_per_s=wave_speed_m_per_s,
         sensor_spacing_m=sensor_spacing_m,
-        segments=segments,
-        overlap=overlap,
         coherence_threshold=coherence_threshold,
         harmonic_bandwidth_hz=harmonic_bandwidth_hz,
+        frequency_threshold_hz=frequency_threshold_hz,
     )
 
 
@@ -88,18 +116,13 @@ csv_files = sorted(
     reverse=True,
 )
 
-# Explain the setup problem and stop rendering if there are no recordings.
+# Offer synthetic data so the dashboard can be previewed without a recording.
 if not csv_files:
-    st.warning(
-        "No converted CSV files were found in the data folder. "
-        "Run python main.py first."
-    )
-    st.stop()
+    st.info("No converted CSV files found. Synthetic demo data is available.")
 
-# Let the user choose which recording to inspect.
-selected_name = st.sidebar.selectbox("Recording", [path.name for path in csv_files])
-# Rebuild the selected file's full path inside the known data folder.
-selected_path = DATA_DIR / selected_name
+recording_options = [path.name for path in csv_files] + [DEMO_RECORDING_NAME]
+selected_name = st.sidebar.selectbox("Recording", recording_options)
+is_demo = selected_name == DEMO_RECORDING_NAME
 
 # Let the user provide the rate used when the recording was captured.
 sampling_rate = st.sidebar.number_input(
@@ -177,27 +200,34 @@ def open_test_session_dialog() -> None:
         st.rerun()
 
 
-if not st.session_state.get("test_session_started", False):
-    open_test_session_dialog()
-    st.stop()
+if is_demo:
+    st.warning(
+        "Preview mode uses synthetic signals. Analysis results are not saved "
+        "to testing-session logs."
+    )
+else:
+    if not st.session_state.get("test_session_started", False):
+        open_test_session_dialog()
+        st.stop()
 
-
-with st.sidebar:
-    st.subheader("Test session")
-    st.caption(st.session_state["test_session_id"])
-    log_path = Path(st.session_state["test_log_path"])
-    st.caption(str(log_path.relative_to(ROOT)))
-    if st.button("End session"):
-        end_session(log_path)
-        st.session_state["test_session_started"] = False
-        st.rerun()
+    with st.sidebar:
+        st.subheader("Test session")
+        st.caption(st.session_state["test_session_id"])
+        log_path = Path(st.session_state["test_log_path"])
+        st.caption(str(log_path.relative_to(ROOT)))
+        if st.button("End session"):
+            end_session(log_path)
+            st.session_state["test_session_started"] = False
+            st.rerun()
 
 try:
-    # Loading is cached, so repeated dashboard interactions avoid rereading
-    # the same file unless the path or rate changes.
-    data = load_recording(str(selected_path), float(sampling_rate))
+    if is_demo:
+        data = create_demo_recording(float(sampling_rate))
+    else:
+        # Loading is cached, so repeated dashboard interactions avoid rereading
+        # the same file unless the path or rate changes.
+        data = load_recording(str(DATA_DIR / selected_name), float(sampling_rate))
 except (FileNotFoundError, ValueError, OSError) as error:
-    # Turn expected input-file problems into a visible dashboard message.
     st.error(f"Could not load this recording: {error}")
     st.stop()
 
@@ -243,7 +273,9 @@ col2.metric("Sampling rate", f"{sampling_rate:,.0f} Hz")
 col3.metric("Duration", f"{duration:.3f} s")
 
 # Separate the raw data view from the processed leak-analysis view.
-raw_tab, processed_tab = st.tabs(["Raw signal", "Leak analysis"])
+raw_tab, processed_tab, history_tab = st.tabs(
+    ["Raw signal", "Leak analysis", "Run history"]
+)
 
 with raw_tab:
     # The raw tab shows the recorded channels without signal processing.
@@ -300,20 +332,33 @@ with processed_tab:
         "The algorithm uses both complete channels, not only the selected raw "
         "signal display window."
     )
-    # Wave speed and sensor spacing describe the physical pipe setup.
-    wave_speed = st.number_input(
-        "Wave speed (m/s)", min_value=0.001, value=1400.0, step=10.0
+    st.caption(
+        f"Fixed settings: wave speed {DEFAULT_WAVE_SPEED_M_PER_S:,.0f} m/s, "
+        f"Welch segment length {WELCH_SEGMENT_LENGTH:,} samples, and "
+        f"{WELCH_OVERLAP:.0%} overlap. Recordings shorter than the segment "
+        "use their full length."
     )
-    sensor_spacing = st.number_input(
-        "Sensor spacing (m)", min_value=0.001, value=4.0, step=0.1
+    sensor_spacing = st.slider(
+        "Sensor spacing (m)",
+        min_value=0.001,
+        max_value=100.0,
+        value=4.0,
+        step=0.1,
     )
-    # These settings control the Welch frequency estimates.
-    segments = st.number_input(
-        "Welch segments", min_value=1, max_value=128, value=16, step=1
-    )
-    overlap = st.slider("Welch overlap", 0.0, 0.95, 0.75)
     # This cutoff decides which frequency bins are considered coherent
     coherence_threshold = st.slider("Coherence threshold", 0.0, 1.0, 0.4)
+    max_frequency_threshold_hz = min(500.0, float(sampling_rate) / 2)
+    frequency_threshold_hz = st.slider(
+        "Minimum analysis frequency (Hz)",
+        min_value=0.0,
+        max_value=max_frequency_threshold_hz,
+        value=min(75.0, max_frequency_threshold_hz),
+        step=min(1.0, max_frequency_threshold_hz),
+        help=(
+            "Frequency bins below this value are excluded before the "
+            "coherence threshold is applied."
+        ),
+    )
     harmonic_bandwidth = st.number_input(
         "60 Hz harmonic notch bandwidth (Hz)",
         min_value=0.0,
@@ -330,14 +375,17 @@ with processed_tab:
         "The notch filter is applied only to in-memory copies for analysis; "
         "the CSV and raw-signal view are not modified."
     )
-    if st.session_state.pop("_clear_test_run_notes", False):
-        st.session_state["test_run_notes"] = ""
+    if is_demo:
+        run_notes = ""
+    else:
+        if st.session_state.pop("_clear_test_run_notes", False):
+            st.session_state["test_run_notes"] = ""
 
-    run_notes = st.text_area(
-        "Notes for this test",
-        key="test_run_notes",
-        placeholder="Observed behavior, setup changes, anomalies, or next steps...",
-    )
+        run_notes = st.text_area(
+            "Notes for this test",
+            key="test_run_notes",
+            placeholder="Observed behavior, setup changes, anomalies, or next steps...",
+        )
 
     # Do expensive processing only after the user requests it.
     if st.button("Run leak-location algorithm", type="primary"):
@@ -348,49 +396,50 @@ with processed_tab:
                 tuple(data["channel_1"].tolist()),
                 tuple(data["channel_2"].tolist()),
                 float(sampling_rate),
-                float(wave_speed),
                 float(sensor_spacing),
-                int(segments),
-                float(overlap),
                 float(coherence_threshold),
                 float(harmonic_bandwidth),
+                float(frequency_threshold_hz),
             )
             # Save the result so it remains visible across Streamlit reruns.
             st.session_state["leak_analysis"] = result
             st.session_state["leak_analysis_recording"] = selected_name
 
-            # Each completed analysis becomes one row in the current test log.
-            next_run_id = int(st.session_state.get("test_run_id", 0)) + 1
-            append_test_run(
-                log_path,
-                st.session_state["test_session_id"],
-                next_run_id,
-                {
-                    "session_objective": st.session_state["test_session_objective"],
-                    "session_notes": st.session_state["test_session_notes"],
-                    "recording": selected_name,
-                    "sampling_rate_hz": float(sampling_rate),
-                    "channels": ",".join(channels),
-                    "time_window_start_s": float(start_time),
-                    "time_window_end_s": float(end_time),
-                    "wave_speed_m_per_s": float(wave_speed),
-                    "sensor_spacing_m": float(sensor_spacing),
-                    "welch_segments": int(segments),
-                    "welch_overlap": float(overlap),
-                    "coherence_threshold": float(coherence_threshold),
-                    "harmonic_bandwidth_hz": float(harmonic_bandwidth),
-                    "estimated_distance_m": float(result.leak_distance_m),
-                    "peak_lag_s": float(result.peak_lag_s),
-                    "segment_length": int(result.segment_length),
-                    "run_notes": run_notes,
-                },
-            )
-            st.session_state["test_run_id"] = next_run_id
-            st.success(
-                f"Test run {next_run_id} saved to "
-                f"{log_path.relative_to(ROOT)}"
-            )
-            st.session_state["_clear_test_run_notes"] = True
+            if is_demo:
+                st.success("Demo analysis complete. This run was not saved.")
+            else:
+                # Each completed analysis becomes one row in the current test log.
+                next_run_id = int(st.session_state.get("test_run_id", 0)) + 1
+                append_test_run(
+                    log_path,
+                    st.session_state["test_session_id"],
+                    next_run_id,
+                    {
+                        "session_objective": st.session_state["test_session_objective"],
+                        "session_notes": st.session_state["test_session_notes"],
+                        "recording": selected_name,
+                        "sampling_rate_hz": float(sampling_rate),
+                        "channels": ",".join(channels),
+                        "time_window_start_s": float(start_time),
+                        "time_window_end_s": float(end_time),
+                        "wave_speed_m_per_s": DEFAULT_WAVE_SPEED_M_PER_S,
+                        "sensor_spacing_m": float(sensor_spacing),
+                        "welch_overlap": WELCH_OVERLAP,
+                        "coherence_threshold": float(coherence_threshold),
+                        "frequency_threshold_hz": float(frequency_threshold_hz),
+                        "harmonic_bandwidth_hz": float(harmonic_bandwidth),
+                        "estimated_distance_m": float(result.leak_distance_m),
+                        "peak_lag_s": float(result.peak_lag_s),
+                        "segment_length": int(result.segment_length),
+                        "run_notes": run_notes,
+                    },
+                )
+                st.session_state["test_run_id"] = next_run_id
+                st.success(
+                    f"Test run {next_run_id} saved to "
+                    f"{log_path.relative_to(ROOT)}"
+                )
+                st.session_state["_clear_test_run_notes"] = True
             st.rerun()
         except ValueError as error:
             # Show invalid parameter errors without crashing the dashboard.
@@ -532,3 +581,99 @@ with processed_tab:
         )
         # Render the filtered cross-correlation chart.
         st.plotly_chart(correlation_plot, use_container_width=True)
+
+with history_tab:
+    st.subheader("Test run history")
+    session_paths = find_all_sessions(ROOT)
+
+    if not session_paths:
+        st.info("No testing-session logs were found.")
+    else:
+        session_index = st.selectbox(
+            "Session",
+            range(len(session_paths)),
+            format_func=lambda index: session_paths[index].stem.replace(
+                "test_log_", ""
+            ).replace("_session-", " · Session "),
+        )
+        history_path = session_paths[session_index]
+
+        try:
+            history = pd.read_csv(history_path)
+        except (OSError, pd.errors.EmptyDataError, pd.errors.ParserError) as error:
+            st.error(f"Could not read this session log: {error}")
+        else:
+            required_columns = {"run_id", "timestamp"}
+            missing_columns = required_columns.difference(history.columns)
+            if missing_columns:
+                st.error(
+                    "This session log is missing required columns: "
+                    f"{', '.join(sorted(missing_columns))}."
+                )
+            elif history.empty:
+                st.info("This session does not have any saved analysis runs yet.")
+            else:
+                history = history.sort_values(
+                    "timestamp", ascending=False, kind="stable"
+                ).reset_index(drop=True)
+                display_columns = [
+                    ("timestamp", "Time"),
+                    ("run_id", "Run"),
+                    ("recording", "Recording"),
+                    ("estimated_distance_m", "Leak distance (m)"),
+                    ("peak_lag_s", "Peak delay (s)"),
+                    ("wave_speed_m_per_s", "Wave speed (m/s)"),
+                    ("sensor_spacing_m", "Sensor spacing (m)"),
+                    ("frequency_threshold_hz", "Minimum frequency (Hz)"),
+                    ("run_notes", "Notes"),
+                ]
+                available_columns = [
+                    (column, label)
+                    for column, label in display_columns
+                    if column in history.columns
+                ]
+                st.dataframe(
+                    history[[column for column, _ in available_columns]].rename(
+                        columns=dict(available_columns)
+                    ),
+                    use_container_width=True,
+                    hide_index=True,
+                )
+
+                selected_run_index = st.selectbox(
+                    "Run details",
+                    range(len(history)),
+                    format_func=lambda index: (
+                        f"Run {history.iloc[index]['run_id']} · "
+                        f"{history.iloc[index]['timestamp']} · "
+                        f"{history.iloc[index].get('recording', 'Unknown recording')}"
+                    ),
+                )
+                selected_run = history.iloc[selected_run_index]
+                metric_col, delay_col = st.columns(2)
+                distance = pd.to_numeric(
+                    selected_run.get("estimated_distance_m"), errors="coerce"
+                )
+                peak_lag = pd.to_numeric(
+                    selected_run.get("peak_lag_s"), errors="coerce"
+                )
+                metric_col.metric(
+                    "Estimated leak distance",
+                    f"{distance:.3f} m" if pd.notna(distance) else "Unavailable",
+                )
+                delay_col.metric(
+                    "Peak time delay",
+                    f"{peak_lag * 1000:.3f} ms"
+                    if pd.notna(peak_lag)
+                    else "Unavailable",
+                )
+                with st.expander("Selected run settings and notes"):
+                    details = selected_run.dropna().to_frame("Value")
+                    st.dataframe(details, use_container_width=True)
+
+                st.download_button(
+                    "Download this session's run history",
+                    data=history.to_csv(index=False).encode("utf-8"),
+                    file_name=history_path.name,
+                    mime="text/csv",
+                )

@@ -59,6 +59,13 @@ python main.py --url "http://rp-f05437.local/streaming_manager/upload/data_file_
 python main.py --no-dashboard
 ```
 
+## Preview the dashboard without recordings
+
+Run the dashboard directly with `streamlit run src/dashboard.py`. Choose
+**Synthetic demo (not logged)** from the recording list to preview the charts
+and run the analysis without a CSV. Demo analyses are not added to testing
+session logs.
+
 ## Important measurement note
 
 The loader multiplies both channel values by `40 / 2^16` and the dashboard
@@ -75,8 +82,11 @@ The dashboard uses `channel_1` and `channel_2` from the converted Red Pitaya
 CSV directly. The **Raw signal** tab shows the unprocessed recording. The
 **Leak analysis** tab optionally runs the coherence-filtered cross-correlation
 algorithm and displays the estimated leak distance, cross-spectrum, coherence,
-and filtered correlation. Wave speed, sensor spacing, Welch segmentation,
-overlap, and coherence threshold can be adjusted before running the analysis.
+and filtered correlation. Wave speed is fixed at 1,780 m/s.
+Welch analysis uses a fixed 2,048-sample segment and 50% overlap (or the full
+recording length for shorter inputs). Sensor spacing, minimum analysis
+frequency, coherence threshold, and harmonic notch bandwidth can be adjusted
+before running the analysis.
 The dashboard also provides an optional 60 Hz harmonic notch filter. Its total
 bandwidth can be set from 0.00 to 15.00 Hz in 0.01 Hz increments; the filter
 is applied to in-memory copies only, so the CSV and raw-signal display remain
@@ -86,7 +96,7 @@ unchanged.
 
 The dashboard opens a testing-session setup dialog the first time it starts.
 The dialog can create a new session or resume today's latest session, and
-captures the operator, objective, and known setup notes.
+captures the objective and known setup notes.
 
 Every successful leak-analysis run is appended to a CSV in `test logs/`. Files
 are grouped by day and session:

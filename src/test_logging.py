@@ -26,6 +26,7 @@ COLUMNS = [
     "welch_segments",
     "welch_overlap",
     "coherence_threshold",
+    "frequency_threshold_hz",
     "harmonic_bandwidth_hz",
     "estimated_distance_m",
     "peak_lag_s",
@@ -54,6 +55,13 @@ def find_sessions_for_day(project_root: Path, session_date: date | None = None) 
         else -1,
         reverse=True,
     )
+
+
+def find_all_sessions(project_root: Path) -> list[Path]:
+    """Find all session CSV files, with the most recently updated first."""
+    log_directory = get_log_directory(project_root)
+    files = log_directory.glob("test_log_*_session-*.csv")
+    return sorted(files, key=lambda path: path.stat().st_mtime, reverse=True)
 
 
 def _next_session_number(project_root: Path, session_date: date) -> int:
@@ -124,6 +132,17 @@ def append_test_run(
     frame = pd.DataFrame([complete_row])
 
     if log_path.exists() and log_path.stat().st_size > 0:
+        existing_columns = pd.read_csv(log_path, nrows=0).columns.tolist()
+        extra_columns = [
+            column for column in existing_columns if column not in COLUMNS
+        ]
+        file_columns = [*COLUMNS, *extra_columns]
+        if existing_columns != file_columns:
+            existing = pd.read_csv(log_path).reindex(columns=file_columns)
+            existing.to_csv(log_path, index=False)
+        frame = pd.DataFrame(
+            [{column: row.get(column, "") for column in file_columns}]
+        )
         frame.to_csv(log_path, mode="a", header=False, index=False)
     else:
         frame.to_csv(log_path, index=False)
