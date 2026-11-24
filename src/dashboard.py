@@ -651,20 +651,28 @@ with history_tab:
                 )
                 selected_run = history.iloc[selected_run_index]
                 metric_col, delay_col = st.columns(2)
-                distance = pd.to_numeric(
-                    selected_run.get("estimated_distance_m"), errors="coerce"
+                distance_value = pd.to_numeric(
+                    pd.Series([selected_run.get("estimated_distance_m")]),
+                    errors="coerce",
+                ).iloc[0]
+                distance = (
+                    float(distance_value) if pd.notna(distance_value) else None
                 )
-                peak_lag = pd.to_numeric(
-                    selected_run.get("peak_lag_s"), errors="coerce"
+                peak_lag_value = pd.to_numeric(
+                    pd.Series([selected_run.get("peak_lag_s")]),
+                    errors="coerce",
+                ).iloc[0]
+                peak_lag = (
+                    float(peak_lag_value) if pd.notna(peak_lag_value) else None
                 )
                 metric_col.metric(
                     "Estimated leak distance",
-                    f"{distance:.3f} m" if pd.notna(distance) else "Unavailable",
+                    f"{distance:.3f} m" if distance is not None else "Unavailable",
                 )
                 delay_col.metric(
                     "Peak time delay",
                     f"{peak_lag * 1000:.3f} ms"
-                    if pd.notna(peak_lag)
+                    if peak_lag is not None
                     else "Unavailable",
                 )
                 with st.expander("Selected run settings and notes"):
