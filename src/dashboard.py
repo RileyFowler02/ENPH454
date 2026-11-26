@@ -21,6 +21,7 @@ import streamlit as st
 
 # Import the analysis result type and processing function.
 from src.leak_detection import (
+    DEFAULT_COHERENCE_THRESHOLD,
     DEFAULT_WAVE_SPEED_M_PER_S,
     WELCH_OVERLAP,
     WELCH_SEGMENT_LENGTH,
@@ -92,7 +93,6 @@ def run_leak_analysis(
     channel_2: tuple[float, ...],
     sampling_rate_hz: float,
     sensor_spacing_m: float,
-    coherence_threshold: float,
     harmonic_bandwidth_hz: float,
     frequency_threshold_hz: float,
 ) -> LeakAnalysis:
@@ -103,7 +103,6 @@ def run_leak_analysis(
         channel_2=pd.Series(channel_2).to_numpy(),
         sampling_rate_hz=sampling_rate_hz,
         sensor_spacing_m=sensor_spacing_m,
-        coherence_threshold=coherence_threshold,
         harmonic_bandwidth_hz=harmonic_bandwidth_hz,
         frequency_threshold_hz=frequency_threshold_hz,
     )
@@ -334,6 +333,7 @@ with processed_tab:
     )
     st.caption(
         f"Fixed settings: wave speed {DEFAULT_WAVE_SPEED_M_PER_S:,.0f} m/s, "
+        f"MSC threshold {DEFAULT_COHERENCE_THRESHOLD:.2f}, "
         f"Welch segment length {WELCH_SEGMENT_LENGTH:,} samples, and "
         f"{WELCH_OVERLAP:.0%} overlap. Recordings shorter than the segment "
         "use their full length."
@@ -345,8 +345,6 @@ with processed_tab:
         value=4.0,
         step=0.1,
     )
-    # This cutoff decides which frequency bins are considered coherent
-    coherence_threshold = st.slider("Coherence threshold", 0.0, 1.0, 0.4)
     max_frequency_threshold_hz = min(500.0, float(sampling_rate) / 2)
     frequency_threshold_hz = st.slider(
         "Minimum analysis frequency (Hz)",
@@ -397,7 +395,6 @@ with processed_tab:
                 tuple(data["channel_2"].tolist()),
                 float(sampling_rate),
                 float(sensor_spacing),
-                float(coherence_threshold),
                 float(harmonic_bandwidth),
                 float(frequency_threshold_hz),
             )
@@ -425,7 +422,7 @@ with processed_tab:
                         "wave_speed_m_per_s": DEFAULT_WAVE_SPEED_M_PER_S,
                         "sensor_spacing_m": float(sensor_spacing),
                         "welch_overlap": WELCH_OVERLAP,
-                        "coherence_threshold": float(coherence_threshold),
+                        "coherence_threshold": DEFAULT_COHERENCE_THRESHOLD,
                         "frequency_threshold_hz": float(frequency_threshold_hz),
                         "harmonic_bandwidth_hz": float(harmonic_bandwidth),
                         "estimated_distance_m": float(result.leak_distance_m),

@@ -9,10 +9,18 @@ import numpy as np
 from scipy.signal import coherence, csd, hilbert
 
 
-DEFAULT_WAVE_SPEED_M_PER_S = 1780.0
+DEFAULT_WAVE_SPEED_M_PER_S = 412.0
+DEFAULT_COHERENCE_THRESHOLD = 0.08
+MIN_ANALYSIS_FREQUENCY_HZ = 1400.0
+MAX_ANALYSIS_FREQUENCY_HZ = 3400.0
+TAU_OFFSET_S = -0.00101
 WELCH_SEGMENT_LENGTH = 2048
 WELCH_OVERLAP = 0.5
 
+# filter low-freq prior to processing (value would need to be determined experimentally (possibly 20hz), )
+# look at scipy butterworth filter functino
+# flat pass band
+# order determines how fast we fit the cutoff freq (i.e., rise speed)
 
 @dataclass(frozen=True)
 class LeakAnalysis:
@@ -32,7 +40,7 @@ class LeakAnalysis:
     correlation: np.ndarray
     # Magnitude of the analytic correlation signal
     envelope: np.ndarray
-    # Delay at the largest envelope peak.
+    # Delay at the largest envelope peak after applying the fixed tau offset.
     peak_lag_s: float
     # Estimated distance from sensor 1 to the leak.
     leak_distance_m: float
@@ -78,9 +86,9 @@ def analyze_leak(
     sampling_rate_hz: float,
     wave_speed_m_per_s: float = DEFAULT_WAVE_SPEED_M_PER_S,
     sensor_spacing_m: float = 4.0,
-    coherence_threshold: float = 0.4,
+    coherence_threshold: float = DEFAULT_COHERENCE_THRESHOLD,
     harmonic_bandwidth_hz: float = 0.0,
-    frequency_threshold_hz: float = 75.0,
+    frequency_threshold_hz: float = MIN_ANALYSIS_FREQUENCY_HZ,
 ) -> LeakAnalysis:
     """Estimate leak location using coherence-filtered cross-correlation."""
     # Reject physically or mathematically invalid analysis settings first.
@@ -135,7 +143,11 @@ def analyze_leak(
     _, coherence_values = coherence(
         x1, x2, fs=sampling_rate_hz, nperseg=segment_length, noverlap=noverlap
     )
-    coherence_values[frequency_hz < frequency_threshold_hz] = 0
+    analysis_band = (
+        (frequency_hz >= max(frequency_threshold_hz, MIN_ANALYSIS_FREQUENCY_HZ))
+        & (frequency_hz <= MAX_ANALYSIS_FREQUENCY_HZ)
+    )
+    coherence_values[~analysis_band] = 0
 
     # Keep only frequencies whose coherence exceeds the user-selected cutoff.
     leak_band = coherence_values > coherence_threshold
@@ -157,7 +169,7 @@ def analyze_leak(
     lag_s = lag_samples / sampling_rate_hz
     # The maximum envelope value is the selected propagation delay.
     peak_index = int(np.argmax(envelope))
-    peak_lag_s = float(lag_s[peak_index])
+    peak_lag_s = float(lag_s[peak_index]) + TAU_OFFSET_S
     # With sensors on a pipe, this equation converts delay to distance from
     # the first sensor using the known spacing and wave speed.
     leak_distance_m = (sensor_spacing_m - wave_speed_m_per_s * peak_lag_s) / 2
