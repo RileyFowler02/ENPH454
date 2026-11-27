@@ -341,9 +341,9 @@ with processed_tab:
     sensor_spacing = st.slider(
         "Sensor spacing (m)",
         min_value=0.001,
-        max_value=100.0,
+        max_value=10.0,
         value=4.0,
-        step=0.1,
+        step=0.025,
     )
     max_frequency_threshold_hz = min(500.0, float(sampling_rate) / 2)
     frequency_threshold_hz = st.slider(
